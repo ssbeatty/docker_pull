@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"reflect"
 	"strings"
@@ -234,13 +235,39 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 	} else if FileExists(dockerConfigPath) {
 		dockerConfigRaw, err := ioutil.ReadFile(dockerConfigPath)
 		if err == nil {
-			gjson.Get(string(dockerConfigRaw), "auths").ForEach(func(key, value gjson.Result) bool {
-				if key.String() == tag.Registry && value.Get("auth").Exists() {
-					auth = DecodeBasicAuth(value.Get("auth").String())
-					return false
+			if credsStore := gjson.Get(string(dockerConfigRaw), "credsStore").String(); credsStore != "" {
+				command := fmt.Sprintf("docker-credential-%s", credsStore)
+				_, err = exec.LookPath(command)
+				if err == nil {
+					cmd := exec.Command(command, "get")
+
+					pipe, err := cmd.StdinPipe()
+					if err == nil {
+						_, _ = fmt.Fprintln(pipe, tag.Registry)
+						pipe.Close()
+					}
+
+					output, err := cmd.Output()
+					if err == nil {
+						passwd := gjson.Get(string(output), "Secret").String()
+						uname := gjson.Get(string(output), "Username").String()
+						if passwd != "" && uname != "" {
+							auth = &BasicAuth{
+								UserName: uname,
+								PassWord: passwd,
+							}
+						}
+					}
 				}
-				return true
-			})
+			} else {
+				gjson.Get(string(dockerConfigRaw), "auths").ForEach(func(key, value gjson.Result) bool {
+					if key.String() == tag.Registry && value.Get("auth").Exists() {
+						auth = DecodeBasicAuth(value.Get("auth").String())
+						return false
+					}
+					return true
+				})
+			}
 		}
 	}
 
@@ -458,7 +485,7 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 		return
 	}
 
-	dockerTar := strings.ReplaceAll(tag.Repo, "/", "_") + "_" + tag.Img + ".tar"
+	dockerTar := strings.ReplaceAll(tag.Repo, "/", "_") + "_" + tag.Img + "_" + tag.Tag + ".tar"
 	if FileExists(dockerTar) {
 		if err := os.RemoveAll(dockerTar); err != nil {
 			log.Printf("error when remove docker tar file, err: %v\n", err)
