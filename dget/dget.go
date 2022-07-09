@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -129,7 +130,7 @@ func (c *Client) getAuthToken(tag *ImageTag, auth Auth) (string, error) {
 	}
 
 	header := http.Header{}
-	if auth != nil {
+	if !reflect.ValueOf(auth).IsNil() {
 		header.Set("Authorization", auth.ParseAuthHeader())
 	}
 	resp, err := c.get(
@@ -140,19 +141,12 @@ func (c *Client) getAuthToken(tag *ImageTag, auth Auth) (string, error) {
 		return "", err
 	}
 
-	ret := make(map[string]string)
-
 	context, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	err = json.Unmarshal(context, &ret)
-	if err != nil {
-		return "", err
-	}
-
-	if token, ok := ret["token"]; ok {
+	if token := gjson.Get(string(context), "token").String(); token != "" {
 		return fmt.Sprintf("Bearer %s", token), nil
 	}
 
