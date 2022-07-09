@@ -1,9 +1,11 @@
 package dget
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gwuhaolin/lightsocks"
 	"github.com/mitchellh/go-homedir"
 	"github.com/tidwall/gjson"
 	"github.com/vbauerster/mpb/v7"
@@ -12,6 +14,7 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,7 +27,8 @@ import (
 )
 
 var (
-	dockerConfigPath string
+	dockerConfigPath    string
+	lightSockConfigPath string
 )
 
 func init() {
@@ -34,15 +38,18 @@ func init() {
 	}
 
 	dockerConfigPath = path.Join(dir, ".docker", "config.json")
+	lightSockConfigPath = path.Join(dir, ".lightsocks.json")
 }
 
 type Client struct {
-	conf atomic.Value
+	conf        atomic.Value
+	lsockConfig *LightSockConfig
 }
 
 type Config struct {
-	Proxy   string
-	NeedBar bool
+	Proxy     string
+	NeedBar   bool
+	LightSock LightSock
 }
 
 func NewClient(c *Config) *Client {
@@ -53,6 +60,16 @@ func NewClient(c *Config) *Client {
 	} else {
 		client.conf.Store(&Config{})
 	}
+
+	if c.LightSock.Enable {
+		config, err := client.readLightSockConfig()
+		if err != nil {
+			log.Printf("lightsock config parse error: %v\n", err)
+			return nil
+		}
+
+		client.lsockConfig = config
+	}
 	return client
 }
 
@@ -60,8 +77,7 @@ func (c *Client) config() *Config {
 	return c.conf.Load().(*Config)
 }
 
-func (c *Client) get(path string, header http.Header) (*http.Response, error) {
-
+func (c *Client) newHttpClient() *http.Client {
 	var client *http.Client
 
 	if c.config().Proxy != "" {
@@ -76,9 +92,42 @@ func (c *Client) get(path string, header http.Header) (*http.Response, error) {
 		client = &http.Client{
 			Transport: httpTransport,
 		}
+	} else if c.config().LightSock.Enable {
+		dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
+			bsPassword, err := lightsocks.ParsePassword(c.lsockConfig.Password)
+			if err != nil {
+				return nil, err
+			}
+			structRemoteAddr, err := net.ResolveTCPAddr("tcp", c.lsockConfig.RemoteAddr)
+			if err != nil {
+				return nil, err
+			}
+
+			tcp, err := lightsocks.DialEncryptedTCP(structRemoteAddr, lightsocks.NewCipher(bsPassword))
+			if err != nil {
+				return nil, err
+			}
+			return &SecureTCPConn{
+				SecureTCPConn: tcp,
+			}, nil
+		}
+		httpTransport := &http.Transport{
+			DialContext: dialContext,
+		}
+
+		client = &http.Client{
+			Transport: httpTransport,
+		}
 	} else {
 		client = &http.Client{}
 	}
+
+	return client
+}
+
+func (c *Client) get(path string, header http.Header) (*http.Response, error) {
+
+	client := c.newHttpClient()
 
 	req, err := http.NewRequest("GET", path, nil)
 	if err != nil {

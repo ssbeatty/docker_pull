@@ -8,9 +8,11 @@ import (
 )
 
 var (
-	proxy    string
-	username string
-	password string
+	proxy      string
+	username   string
+	password   string
+	lsocks     bool
+	lsocksPath string
 )
 
 func init() {
@@ -18,6 +20,10 @@ func init() {
 	downloadCmd.PersistentFlags().StringVarP(&proxy, "proxy", "s", "", "First Select Proxy When Download Image")
 	downloadCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "User of Registry, Default From Docker Login & Only One Image Useful")
 	downloadCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "Password of Registry, Default From Docker Login& Only One Image Useful")
+
+	// proxy
+	downloadCmd.PersistentFlags().BoolVarP(&lsocks, "lsocks", "", false, "Enable LightSockets")
+	downloadCmd.PersistentFlags().StringVarP(&lsocksPath, "lsocks_path", "", "", "LightSockets Config Path, Default ~/.lightsocks.json")
 }
 
 var downloadCmd = &cobra.Command{
@@ -37,6 +43,10 @@ func startDownload(args []string) {
 	client := dget.NewClient(&dget.Config{
 		Proxy:   proxy,
 		NeedBar: true,
+		LightSock: dget.LightSock{
+			Enable:     lsocks,
+			ConfigPath: lsocksPath,
+		},
 	})
 
 	wg := sync.WaitGroup{}
