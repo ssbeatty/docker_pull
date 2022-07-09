@@ -35,7 +35,8 @@ func startDownload(args []string) {
 	// https://github.com/gwuhaolin/lightsocks
 	// ShadowSocksR or V2Ray
 	client := dget.NewClient(&dget.Config{
-		Proxy: proxy,
+		Proxy:   proxy,
+		NeedBar: true,
 	})
 
 	wg := sync.WaitGroup{}

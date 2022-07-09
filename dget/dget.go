@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"github.com/mitchellh/go-homedir"
 	"github.com/tidwall/gjson"
+	"github.com/vbauerster/mpb/v7"
+	"github.com/vbauerster/mpb/v7/decor"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -37,7 +39,8 @@ type Client struct {
 }
 
 type Config struct {
-	Proxy string
+	Proxy   string
+	NeedBar bool
 }
 
 func NewClient(c *Config) *Client {
@@ -185,6 +188,27 @@ func (c *Client) DownloadFile(url, localPath string, header http.Header) error {
 	return nil
 }
 
+func (c *Client) DownloadFileWithBar(url, localPath string, header http.Header, bar *mpb.Bar) error {
+	resp, err := c.get(url, header)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE, fs.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	defer file.Close()
+
+	_, err = io.Copy(file, bar.ProxyReader(resp.Body))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) getParentId(layers []gjson.Result, idx int) (parentId, fakeLayerid string) {
 	for i, layer := range layers {
 		uBlob := layer.Get("digest").String()
@@ -308,13 +332,36 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 
 	wg := sync.WaitGroup{}
 
+	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithWidth(24))
+
+	_, _ = fmt.Fprintf(os.Stdout, "Downloading %s\n", tag.ImagUri)
+
 	for idx, layer := range layerArray {
 		wg.Add(1)
+
+		var bar *mpb.Bar
+
+		uBlob := layer.Get("digest").String()
+		total := layer.Get("size").Int()
+
+		name := fmt.Sprintf("%s", uBlob[7:19])
+
+		if c.config().NeedBar {
+			bar = p.AddBar(total,
+				mpb.PrependDecorators(
+					decor.Name(name),
+					decor.OnComplete(decor.Percentage(decor.WCSyncSpace), "done"),
+				),
+				mpb.AppendDecorators(
+					// replace ETA decorator with "done" message, OnComplete event
+					decor.Counters(decor.UnitKiB, "% .1f / % .1f"),
+				),
+			)
+		}
 
 		go func(idx int, layer gjson.Result) {
 
 			parentId, fakeLayerid := c.getParentId(layerArray, idx)
-			uBlob := layer.Get("digest").String()
 
 			layerDir := imgDir + "/" + fakeLayerid
 
@@ -326,7 +373,20 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 
 			_ = ioutil.WriteFile(path.Join(layerDir, "VERSION"), []byte("1.0"), os.ModePerm)
 
-			err = c.DownloadFile(fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob), path.Join(layerDir, "layer_gzip.tar"), header)
+			if c.config().NeedBar {
+				err = c.DownloadFileWithBar(
+					fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
+					path.Join(layerDir, "layer_gzip.tar"),
+					header, bar,
+				)
+			} else {
+				err = c.DownloadFile(
+					fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
+					path.Join(layerDir, "layer_gzip.tar"),
+					header,
+				)
+			}
+
 			if err != nil {
 				log.Printf("error when download layer: %s, err: %v\n", fakeLayerid, err)
 				return
@@ -373,7 +433,7 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 		}(idx, layer)
 	}
 
-	wg.Wait()
+	p.Wait()
 
 	for idx, _ := range layerArray {
 		_, fakeLayerid := c.getParentId(layerArray, idx)
@@ -416,5 +476,5 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 		return
 	}
 
-	//_ = os.RemoveAll(imgDir)
+	_ = os.RemoveAll(imgDir)
 }

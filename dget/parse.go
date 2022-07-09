@@ -38,6 +38,7 @@ const (
 )
 
 type ImageTag struct {
+	ImagUri    string
 	Img        string
 	Tag        string
 	Registry   string
@@ -97,6 +98,7 @@ func (c *Client) ParseImageTag(name string) (*ImageTag, error) {
 	}
 
 	return &ImageTag{
+		ImagUri:    name,
 		Img:        img,
 		Tag:        tag,
 		Registry:   registry,
