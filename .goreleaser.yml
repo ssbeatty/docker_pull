@@ -1,0 +1,26 @@
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - binary: docker_pull
+    id: docker_pull
+    main: main.go
+    ldflags:
+      - -s -w
+    goos:
+      - windows
+      - darwin
+      - linux
+      - freebsd
+    goarch:
+      - amd64
+      - 386
+      - arm
+
+archives:
+  -
+    name_template: "{{.Os}}-{{.Arch}}{{if .Arm}}v{{.Arm}}{{end}}-{{ .ProjectName }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
