@@ -19,8 +19,33 @@ type LightSockConfig struct {
 	Password   string `json:"password"`
 }
 
+// SecureTCPConn Dial light socks remote
 type SecureTCPConn struct {
 	*lightsocks.SecureTCPConn
+	cipher     *lightsocks.Cipher
+	remoteAddr string
+}
+
+func NewSecureTCPConn(cipher *lightsocks.Cipher, remote string) *SecureTCPConn {
+	return &SecureTCPConn{
+		cipher:     cipher,
+		remoteAddr: remote,
+	}
+}
+
+func (s *SecureTCPConn) Dial(_, _ string) (net.Conn, error) {
+	structRemoteAddr, err := net.ResolveTCPAddr("tcp", s.remoteAddr)
+	if err != nil {
+		return nil, err
+	}
+	tcp, err := lightsocks.DialEncryptedTCP(structRemoteAddr, s.cipher)
+	if err != nil {
+		return nil, err
+	}
+
+	s.SecureTCPConn = tcp
+
+	return s, nil
 }
 
 func (s *SecureTCPConn) Read(b []byte) (n int, err error) {

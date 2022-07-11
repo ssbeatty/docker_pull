@@ -17,7 +17,7 @@ func FileExists(filename string) bool {
 	return true
 }
 
-func DecodeBasicAuth(authHex string) *BasicAuth {
+func DecodeBasicAuth(authHex string) Auth {
 	decodeBytes, err := base64.StdEncoding.DecodeString(authHex)
 	if err != nil {
 		return nil

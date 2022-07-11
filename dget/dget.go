@@ -10,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
+	"golang.org/x/net/proxy"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -20,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,8 +42,9 @@ func init() {
 }
 
 type Client struct {
-	conf        atomic.Value
-	lsockConfig *LightSockConfig
+	conf         atomic.Value
+	lsocksConfig *LightSockConfig
+	lsocksCipher *lightsocks.Cipher
 }
 
 type Config struct {
@@ -68,7 +69,13 @@ func NewClient(c *Config) *Client {
 			return nil
 		}
 
-		client.lsockConfig = config
+		bsPassword, err := lightsocks.ParsePassword(config.Password)
+		if err != nil {
+			return nil
+		}
+
+		client.lsocksConfig = config
+		client.lsocksCipher = lightsocks.NewCipher(bsPassword)
 	}
 	return client
 }
@@ -81,12 +88,12 @@ func (c *Client) newHttpClient() *http.Client {
 	var client *http.Client
 
 	if c.config().Proxy != "" {
-		proxy := func(_ *http.Request) (*url.URL, error) {
+		pxy := func(_ *http.Request) (*url.URL, error) {
 			return url.Parse(c.config().Proxy)
 		}
 
 		httpTransport := &http.Transport{
-			Proxy: proxy,
+			Proxy: pxy,
 		}
 
 		client = &http.Client{
@@ -94,22 +101,15 @@ func (c *Client) newHttpClient() *http.Client {
 		}
 	} else if c.config().LightSock.Enable {
 		dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
-			bsPassword, err := lightsocks.ParsePassword(c.lsockConfig.Password)
-			if err != nil {
-				return nil, err
-			}
-			structRemoteAddr, err := net.ResolveTCPAddr("tcp", c.lsockConfig.RemoteAddr)
+			lsocksConn := NewSecureTCPConn(c.lsocksCipher, c.lsocksConfig.RemoteAddr)
+
+			dialer, err := proxy.SOCKS5(network, address, nil, lsocksConn)
 			if err != nil {
 				return nil, err
 			}
 
-			tcp, err := lightsocks.DialEncryptedTCP(structRemoteAddr, lightsocks.NewCipher(bsPassword))
-			if err != nil {
-				return nil, err
-			}
-			return &SecureTCPConn{
-				SecureTCPConn: tcp,
-			}, nil
+			return dialer.Dial(network, address)
+
 		}
 		httpTransport := &http.Transport{
 			DialContext: dialContext,
@@ -180,7 +180,7 @@ func (c *Client) getAuthToken(tag *ImageTag, auth Auth) (string, error) {
 	}
 
 	header := http.Header{}
-	if !reflect.ValueOf(auth).IsNil() {
+	if auth != nil {
 		header.Set("Authorization", auth.ParseAuthHeader())
 	}
 	resp, err := c.get(
@@ -191,12 +191,12 @@ func (c *Client) getAuthToken(tag *ImageTag, auth Auth) (string, error) {
 		return "", err
 	}
 
-	context, err := ioutil.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	if token := gjson.Get(string(context), "token").String(); token != "" {
+	if token := gjson.Get(string(body), "token").String(); token != "" {
 		return fmt.Sprintf("Bearer %s", token), nil
 	}
 
@@ -269,7 +269,7 @@ func (c *Client) getParentId(layers []gjson.Result, idx int) (parentId, fakeLaye
 
 func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 	var (
-		auth   *BasicAuth
+		auth   Auth
 		header http.Header
 	)
 
