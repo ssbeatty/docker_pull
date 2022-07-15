@@ -2,7 +2,10 @@ package dget
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gwuhaolin/lightsocks"
+	"io/fs"
+	"io/ioutil"
 	"net"
 	"os"
 	"time"
@@ -93,4 +96,37 @@ func (c *Client) readLightSockConfig() (*LightSockConfig, error) {
 	}
 
 	return conf, nil
+}
+
+func (c *Client) readSSRConfig() (*Params, error) {
+
+	if c.config().SSR.Url != "" {
+		params, err := ParseUrlBase64(c.config().SSR.Url)
+		if err != nil {
+			return nil, err
+		} else {
+			conf, _ := json.Marshal(params)
+			// write to path
+			defer ioutil.WriteFile(ssrConfigPath, conf, fs.ModePerm)
+
+			return params, nil
+		}
+	}
+	if _, err := os.Stat(ssrConfigPath); !os.IsNotExist(err) {
+		params := &Params{}
+		file, err := os.Open(ssrConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+
+		err = json.NewDecoder(file).Decode(params)
+		if err != nil {
+			return nil, err
+		} else {
+			return params, nil
+		}
+	}
+
+	return nil, errors.New("config not found")
 }

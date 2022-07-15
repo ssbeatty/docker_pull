@@ -13,6 +13,9 @@ var (
 	password   string
 	lsocks     bool
 	lsocksPath string
+	ssr        bool
+	ssrPath    string
+	ssrUrl     string
 )
 
 func init() {
@@ -21,9 +24,13 @@ func init() {
 	downloadCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "User of Registry, Default From Docker Login & Only One Image Useful")
 	downloadCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "Password of Registry, Default From Docker Login& Only One Image Useful")
 
-	// proxy
+	// lightsocks
 	downloadCmd.PersistentFlags().BoolVarP(&lsocks, "lsocks", "", false, "Enable LightSockets")
 	downloadCmd.PersistentFlags().StringVarP(&lsocksPath, "lsocks_path", "", "", "LightSockets Config Path, Default ~/.lightsocks.json")
+	// ssr
+	downloadCmd.PersistentFlags().BoolVarP(&ssr, "ssr", "", false, "Enable SSR")
+	downloadCmd.PersistentFlags().StringVarP(&ssrPath, "ssr_path", "", "", "SSR Config Path, Default ~/.shadowsocks.json")
+	downloadCmd.PersistentFlags().StringVarP(&ssrUrl, "ssr_url", "", "", "SSR Base64 URL, Start With ssr:// , Will Write To ~/.shadowsocks.json")
 }
 
 var downloadCmd = &cobra.Command{
@@ -37,15 +44,17 @@ var downloadCmd = &cobra.Command{
 }
 
 func startDownload(args []string) {
-	// TODO other proxy client examples
-	// https://github.com/gwuhaolin/lightsocks
-	// ShadowSocksR or V2Ray
 	client := dget.NewClient(&dget.Config{
 		Proxy:   proxy,
 		NeedBar: true,
 		LightSock: dget.LightSock{
 			Enable:     lsocks,
 			ConfigPath: lsocksPath,
+		},
+		SSR: dget.SSR{
+			Enable:     ssr,
+			ConfigPath: ssrPath,
+			Url:        ssrUrl,
 		},
 	})
 

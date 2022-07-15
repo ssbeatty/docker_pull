@@ -8,6 +8,7 @@ import (
 	"github.com/gwuhaolin/lightsocks"
 	"github.com/mitchellh/go-homedir"
 	"github.com/tidwall/gjson"
+	ssrClient "github.com/v2rayA/shadowsocksR/client"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
 	"golang.org/x/net/proxy"
@@ -29,6 +30,7 @@ import (
 var (
 	dockerConfigPath    string
 	lightSockConfigPath string
+	ssrConfigPath       string
 )
 
 func init() {
@@ -39,18 +41,21 @@ func init() {
 
 	dockerConfigPath = path.Join(dir, ".docker", "config.json")
 	lightSockConfigPath = path.Join(dir, ".lightsocks.json")
+	ssrConfigPath = path.Join(dir, ".shadowsocks.json")
 }
 
 type Client struct {
 	conf         atomic.Value
 	lsocksConfig *LightSockConfig
 	lsocksCipher *lightsocks.Cipher
+	ssrConfig    *Params
 }
 
 type Config struct {
 	Proxy     string
 	NeedBar   bool
 	LightSock LightSock
+	SSR       SSR
 }
 
 func NewClient(c *Config) *Client {
@@ -74,8 +79,26 @@ func NewClient(c *Config) *Client {
 			return nil
 		}
 
+		if c.LightSock.ConfigPath != "" {
+			lightSockConfigPath = c.LightSock.ConfigPath
+		}
+
 		client.lsocksConfig = config
 		client.lsocksCipher = lightsocks.NewCipher(bsPassword)
+	}
+
+	if c.SSR.Enable {
+		config, err := client.readSSRConfig()
+		if err != nil {
+			log.Printf("ssr config parse error: %v\n", err)
+			return nil
+		}
+
+		if c.SSR.ConfigPath != "" {
+			ssrConfigPath = c.SSR.ConfigPath
+		}
+
+		client.ssrConfig = config
 	}
 	return client
 }
@@ -108,6 +131,26 @@ func (c *Client) newHttpClient() *http.Client {
 				return nil, err
 			}
 
+			return dialer.Dial(network, address)
+
+		}
+		httpTransport := &http.Transport{
+			DialContext: dialContext,
+		}
+
+		client = &http.Client{
+			Transport: httpTransport,
+		}
+	} else if c.config().SSR.Enable {
+		dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
+			s, err := ConvertDialerURL(*c.ssrConfig)
+			if err != nil {
+				return nil, err
+			}
+			dialer, err := ssrClient.NewSSR(s, proxy.Direct, nil)
+			if err != nil {
+				return nil, err
+			}
 			return dialer.Dial(network, address)
 
 		}

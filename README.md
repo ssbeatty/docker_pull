@@ -21,5 +21,18 @@ docker_pull download --proxy socks5://127.0.0.1:1080 ubuntu:20.04
 docker_pull download --lsocks ubuntu:20.04
 
 # 指定配置
-docker_pull download --lsocks --lsocks_path /your/path/.lightsocks.json ubuntu:20.04
+docker_pull download --lsocks --lsocks_path=/your/path/.lightsocks.json ubuntu:20.04
+```
+
+2. ssr
+   默认从`~/.shadowsocks.json`读取配置
+```shell
+# 不指定配置
+docker_pull download --ssr ubuntu:20.04
+
+# 指定配置
+docker_pull download --ssr --ssr_path=/your/path/.shadowsocks.json ubuntu:20.04
+
+# 指定URL
+docker_pull download --ssr --ssr_url=ssr://... ubuntu:20.04
 ```
