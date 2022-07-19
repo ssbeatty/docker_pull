@@ -31,6 +31,7 @@ var (
 	dockerConfigPath    string
 	lightSockConfigPath string
 	ssrConfigPath       string
+	cachePath           string
 )
 
 func init() {
@@ -42,6 +43,27 @@ func init() {
 	dockerConfigPath = path.Join(dir, ".docker", "config.json")
 	lightSockConfigPath = path.Join(dir, ".lightsocks.json")
 	ssrConfigPath = path.Join(dir, ".shadowsocks.json")
+	cachePath = path.Join(dir, ".docker_pull_cache")
+}
+
+func CleanCache(cleanConfig bool) error {
+	if cleanConfig {
+		if FileExists(lightSockConfigPath) {
+			err := os.Remove(lightSockConfigPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		if FileExists(ssrConfigPath) {
+			err := os.Remove(ssrConfigPath)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return os.RemoveAll(cachePath)
 }
 
 type Client struct {
@@ -54,6 +76,7 @@ type Client struct {
 type Config struct {
 	Proxy     string
 	NeedBar   bool
+	UseCache  bool
 	LightSock LightSock
 	SSR       SSR
 }
@@ -99,6 +122,10 @@ func NewClient(c *Config) *Client {
 		}
 
 		client.ssrConfig = config
+	}
+
+	if c.UseCache {
+		_ = os.MkdirAll(cachePath, os.ModePerm)
 	}
 	return client
 }
@@ -310,6 +337,23 @@ func (c *Client) getParentId(layers []gjson.Result, idx int) (parentId, fakeLaye
 	return
 }
 
+func (c *Client) getCacheFile(fakeLayerid string) (bool, string) {
+	if !c.config().UseCache {
+		return false, ""
+	}
+	fss, err := ioutil.ReadDir(cachePath)
+	if err != nil {
+		return false, ""
+	}
+	for idx, _ := range fss {
+		if fss[idx].Name() == fakeLayerid {
+			return true, path.Join(cachePath, fakeLayerid, "layer.tar")
+		}
+	}
+
+	return false, ""
+}
+
 func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 	var (
 		auth   Auth
@@ -486,32 +530,49 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 
 			_ = ioutil.WriteFile(path.Join(layerDir, "VERSION"), []byte("1.0"), os.ModePerm)
 
-			if c.config().NeedBar {
-				err = c.DownloadFileWithBar(
-					fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
-					path.Join(layerDir, "layer_gzip.tar"),
-					header, bar,
-				)
+			if exist, cacheLayer := c.getCacheFile(fakeLayerid); exist {
+				_, err := CopyFile(path.Join(layerDir, "layer.tar"), cacheLayer, bar)
+				if err != nil {
+					log.Printf("error when copy cache layer: %s, err: %v\n", fakeLayerid, err)
+					return
+				}
 			} else {
-				err = c.DownloadFile(
-					fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
-					path.Join(layerDir, "layer_gzip.tar"),
-					header,
-				)
-			}
+				if c.config().NeedBar {
+					err = c.DownloadFileWithBar(
+						fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
+						path.Join(layerDir, "layer_gzip.tar"),
+						header, bar,
+					)
+				} else {
+					err = c.DownloadFile(
+						fmt.Sprintf("https://%s/v2/%s/blobs/%s", tag.Registry, tag.Repository, uBlob),
+						path.Join(layerDir, "layer_gzip.tar"),
+						header,
+					)
+				}
 
-			if err != nil {
-				log.Printf("error when download layer: %s, err: %v\n", fakeLayerid, err)
-				return
-			}
+				if err != nil {
+					log.Printf("error when download layer: %s, err: %v\n", fakeLayerid, err)
+					return
+				}
 
-			err = UnGzip(path.Join(layerDir, "layer_gzip.tar"), path.Join(layerDir, "layer.tar"))
-			if err != nil {
-				log.Printf("error when unzip layer: %s, err: %v\n", fakeLayerid, err)
-				return
-			}
+				err = UnGzip(path.Join(layerDir, "layer_gzip.tar"), path.Join(layerDir, "layer.tar"))
+				if err != nil {
+					log.Printf("error when unzip layer: %s, err: %v\n", fakeLayerid, err)
+					return
+				}
 
-			_ = os.Remove(path.Join(layerDir, "layer_gzip.tar"))
+				_ = os.Remove(path.Join(layerDir, "layer_gzip.tar"))
+
+				if c.config().UseCache && !FileExists(path.Join(cachePath, fakeLayerid, "layer.tar")) {
+					_ = os.MkdirAll(path.Join(cachePath, fakeLayerid), os.ModePerm)
+					_, err := CopyFile(path.Join(cachePath, fakeLayerid, "layer.tar"), path.Join(layerDir, "layer.tar"), nil)
+					if err != nil {
+						log.Printf("error when cache layer: %s, err: %v\n", fakeLayerid, err)
+						return
+					}
+				}
+			}
 
 			jsonObj := make(map[string]interface{})
 

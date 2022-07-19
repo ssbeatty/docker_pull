@@ -4,7 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"hash"
+	"github.com/vbauerster/mpb/v7"
+	"io"
 	"os"
 	"strings"
 )
@@ -35,7 +36,26 @@ func DecodeBasicAuth(authHex string) Auth {
 }
 
 func HashSha256(msg []byte) string {
-	var h hash.Hash = sha256.New()
+	var h = sha256.New()
 	h.Write(msg)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func CopyFile(dstName, srcName string, bar *mpb.Bar) (written int64, err error) {
+	src, err := os.Open(srcName)
+	if err != nil {
+		return
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return
+	}
+	defer dst.Close()
+
+	if bar != nil {
+		return io.Copy(dst, bar.ProxyReader(src))
+	}
+	return io.Copy(dst, src)
 }
