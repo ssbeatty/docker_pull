@@ -4,6 +4,9 @@ import (
 	"docker_pull/dget"
 	"github.com/spf13/cobra"
 	"log"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -32,6 +35,23 @@ var pullCmd = &cobra.Command{
 	},
 }
 
+func dockerLoad(path string) error {
+	_, err := exec.LookPath("docker")
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("docker", "load", "-i", path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func startPullCmd(args []string) {
 	client := dget.NewClient(&dget.Config{
 		Proxy:    proxy,
@@ -54,6 +74,8 @@ func startPullCmd(args []string) {
 		wg.Add(1)
 
 		go func(imgUri string) {
+			defer wg.Done()
+
 			tag, err := client.ParseImageTag(imgUri)
 			if err != nil {
 				log.Printf("error when parse image uri: %s\n", imgUri)
@@ -61,10 +83,15 @@ func startPullCmd(args []string) {
 			}
 
 			client.DownloadDockerImage(tag, username, password)
+			dockerTar := strings.ReplaceAll(tag.Repo, "/", "_") + "_" + tag.Img + "_" + tag.Tag + ".tar"
 
-			// todo docker load
+			err = dockerLoad(dockerTar)
+			if err != nil {
+				log.Printf("error when docker load %s, err: %v\n", dockerTar, err)
+				return
+			}
+			_ = os.Remove(dockerTar)
 
-			defer wg.Done()
 		}(imgUri)
 	}
 	wg.Wait()

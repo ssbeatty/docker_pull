@@ -54,6 +54,8 @@ func startDownload(args []string) {
 		wg.Add(1)
 
 		go func(imgUri string) {
+			defer wg.Done()
+
 			tag, err := client.ParseImageTag(imgUri)
 			if err != nil {
 				log.Printf("error when parse image uri: %s\n", imgUri)
@@ -62,7 +64,6 @@ func startDownload(args []string) {
 
 			client.DownloadDockerImage(tag, username, password)
 
-			defer wg.Done()
 		}(imgUri)
 	}
 	wg.Wait()
