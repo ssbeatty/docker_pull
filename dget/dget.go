@@ -436,9 +436,49 @@ func (c *Client) DownloadDockerImage(tag *ImageTag, username, password string) {
 		return
 	}
 
-	layerContext, err := ioutil.ReadAll(layerResp.Body)
+	var layerContext []byte
+
+	layerContext, err = ioutil.ReadAll(layerResp.Body)
 	if err != nil {
 		log.Printf("error when get layer response, err: %v\n", err)
+		return
+	}
+
+	var found bool
+	manifests := gjson.Get(string(layerContext), "manifests").Array()
+	if len(manifests) > 0 {
+		for _, manifest := range manifests {
+			if manifest.Get("platform.architecture").String() == "amd64" && manifest.Get("platform.os").String() == "linux" {
+				found = true
+				target := manifest.Get("digest").String()
+				//target = strings.ReplaceAll(target, "sha256:", "")
+				header = c.generateHeader(token, "application/vnd.oci.image.manifest.v1+json")
+				layerResp, err = c.get(
+					fmt.Sprintf("https://%s/v2/%s/manifests/%s", tag.Registry, tag.Repository, target),
+					header,
+				)
+
+				if layerResp.StatusCode != http.StatusOK || err != nil {
+					log.Printf("error when get layers status: %d, err: %v\n", layerResp.StatusCode, err)
+					io.Copy(os.Stdout, layerResp.Body)
+					return
+				}
+
+				layerContext, err = ioutil.ReadAll(layerResp.Body)
+				if err != nil {
+					log.Printf("error when get layer response, err: %v\n", err)
+					return
+				}
+
+				break
+			}
+		}
+	} else {
+		found = true
+	}
+
+	if !found {
+		log.Printf("can't find x64 and linux manifest for %s\n", tag.Tag)
 		return
 	}
 
